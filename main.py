@@ -60,7 +60,15 @@ def obfuscate_number(n: int):
 
     return a, b, c
 
+import random
 
-for _ in range(100):
-    with open("file.txt", "a") as file:
-        file.write(f"{obfuscate_number(13)}\n")
+def obfuscate_number_with_coeff(n: int):
+    pass
+
+
+# for _ in range(100):
+#     with open("file.txt", "a") as file:
+#         file.write(f"{obfuscate_number(13)}\n")
+
+for i in range(100):
+    print(obfuscate_number(132323232))
