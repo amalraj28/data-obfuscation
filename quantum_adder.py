@@ -1,79 +1,115 @@
+from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
 from qiskit.circuit.library import CDKMRippleCarryAdder
-from qiskit import QuantumCircuit, transpile
 from qiskit_aer import AerSimulator
-import matplotlib.pyplot as plt
-from qiskit.visualization import plot_histogram
-
-# Add two n-bit numbers
-num_bits = 4
-
-adder = CDKMRippleCarryAdder(num_bits, "half", "adder")
-
-qc = QuantumCircuit(adder.num_qubits, num_bits + 1)
-
-# add 7 and 8 --> 0111 and 1000
-# First 4 bits are for first number (7), next 4 bits for second number(8)
-# qc.x(list(range(8)))
-
-qc.x(range(8))
-qc.compose(adder.decompose(), inplace=True)
-
-# qc.draw('mpl')
-# plt.show()
-
-qc.measure(range(num_bits, 2 * num_bits + 1), range(num_bits + 1))
-simulator = AerSimulator()
-compiled_circuit = transpile(qc, simulator)
-result = simulator.run(compiled_circuit).result()
-counts = result.get_counts()
-print(int(list(counts.keys())[0], 2))
 
 
-class CuccaroAdder:
-    def __init__(self, num_bits: int, kind: str = "half", name: str = "adder"):
+class TripleAdder:
+    def __init__(self, num_bits: int):
         self.num_bits = num_bits
-        self.adder = CDKMRippleCarryAdder(num_bits, kind, name)
-    
-    def __convert_to_binary(self, number: int) -> str:
-        # Convert an integer to a binary string of fixed length
-        return format(number, f'0{self.num_bits}b')
+        self._build_circuit()
 
-    def generate(self, a: int, b: int) -> QuantumCircuit:
-        assert a < 2**self.num_bits and b < 2 ** self.num_bits, "Input numbers exceed bit limit"
-        
-        qc = QuantumCircuit(self.adder.num_qubits, self.num_bits + 1)
-        
-        a_bin = self.__convert_to_binary(a)
-        b_bin = self.__convert_to_binary(b)
-        qc.initialize(a_bin, range(self.num_bits))
-        qc.initialize(b_bin, range(self.num_bits, 2 * self.num_bits))
-        qc.compose(self.adder, inplace=True)
-        self.__set_qc(qc)
-        return qc
-    
-    def __set_qc(self, qc: QuantumCircuit) -> None:
-        self.qc = qc
-    
-    def __get_qc(self) -> QuantumCircuit:
-        if not hasattr(self, 'qc'):
-            raise AttributeError("Quantum circuit has not been set.")
+    def _build_circuit(self):
+        n = self.num_bits
+
+        # Define quantum registers
+        self.qr_num1 = QuantumRegister(n, "num1")
+        self.qr_num2 = QuantumRegister(n, "num2")
+        self.qr_cout0 = QuantumRegister(1, "cout0")
+        self.qr_num3 = QuantumRegister(n, "num3")
+        self.qr_anc0 = QuantumRegister(1, "anc0")
+        self.qr_cout1 = QuantumRegister(1, "cout1")
+        self.qr_anc1 = QuantumRegister(1, "anc1")
+        self.cr = ClassicalRegister(n + 2, "cr")
+
+        self.qc = QuantumCircuit(
+            self.qr_num1,
+            self.qr_num2,
+            self.qr_cout0,
+            self.qr_num3,
+            self.qr_anc0,
+            self.qr_cout1,
+            self.qr_anc1,
+            self.cr,
+        )
+
+    def initialize_inputs(self, *args, randomize: bool = True):
+        if randomize:
+            for reg in [self.qr_num1, self.qr_num2, self.qr_num3]:
+                self.qc.h(reg)
+            return
+
+        def apply_binary(qreg, value, bits):
+            for i in range(bits):
+                if (value >> i) & 1:
+                    self.qc.x(qreg[i])
+
+        print(args)
+
+        apply_binary(self.qr_num1, args[0], self.num_bits)
+        apply_binary(self.qr_num2, args[1], self.num_bits)
+        apply_binary(self.qr_num3, args[2], self.num_bits)
+
+    def build_adders(self):
+        n = self.num_bits
+
+        # First adder: num1 + num2 -> num2 (overwritten)
+        adder1 = CDKMRippleCarryAdder(n, kind="half")
+        self.qc.compose(
+            adder1,
+            qubits=self.qr_num1[:]
+            + self.qr_num2[:]
+            + self.qr_cout0[:]
+            + self.qr_anc0[:],
+            inplace=True,
+        )
+
+        # Second adder: result + num3 -> num3 (overwritten)
+        adder2 = CDKMRippleCarryAdder(n + 1, kind="half")
+        self.qc.compose(
+            adder2,
+            qubits=(
+                self.qr_num2[:]
+                + self.qr_cout0[:]
+                + self.qr_num3[:]
+                + self.qr_anc0[:]
+                + self.qr_cout1[:]
+                + self.qr_anc1[:]
+            ),
+            inplace=True,
+        )
+
+    def measure_result(self):
+        self.qc.measure(
+            [*self.qr_num3, *self.qr_anc0, *self.qr_cout1],
+            self.cr,
+        )
+
+    def get_circuit(self):
         return self.qc
-    
-    def add_measure(self) -> QuantumCircuit:
-        qc = self.__get_qc()
-        qc.measure(range(self.num_bits, 2 * self.num_bits + 1), range(self.num_bits + 1))
-        return qc
 
-def compile_and_execute(qc: QuantumCircuit, shots: int=1024):
-    sim = AerSimulator()
-    transpiled = transpile(qc, sim)
-    res = sim.run(transpiled, shots=shots).result()
-    return transpiled, res
+    def run(self, shots=1024):
+        backend = AerSimulator()
+        compiled = transpile(self.qc, backend)
+        result = backend.run(compiled, shots=shots).result()
+        counts = result.get_counts()
+        return counts
 
-adder = CuccaroAdder(num_bits)
-qc = adder.generate(15,15)
-qc = adder.add_measure()
+    def decode_results(self, counts):
+        decoded = []
+        for bitstring, freq in counts.items():
+            val = int(bitstring, 2)
+            decoded.append((val, freq))
+        decoded.sort(reverse=True, key=lambda x: x[1])
+        return decoded
 
-_, res = compile_and_execute(qc)
-print(res.get_counts())
 
+adder = TripleAdder(num_bits=3)
+adder.initialize_inputs(2, 4, 2, randomize=False)
+adder.build_adders()
+adder.measure_result()
+
+counts = adder.run()
+results = adder.decode_results(counts)
+
+for value, freq in results:
+    print(f"Sum = {value}, Frequency = {freq}")
