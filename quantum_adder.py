@@ -1,8 +1,9 @@
-from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
+from qiskit import QuantumCircuit, transpile, QuantumRegister, ClassicalRegister
 from qiskit.circuit.library import CDKMRippleCarryAdder
 from qiskit_aer import AerSimulator
-import matplotlib.pyplot as plt
-from qiskit.visualization import plot_histogram
+import math
+from numpy import arcsin, pi, sqrt
+import os
 
 
 class TripleAdder:
@@ -14,17 +15,17 @@ class TripleAdder:
         n = self.num_bits
 
         # Define quantum registers
-        self.qr_num1 = QuantumRegister(n, "num1")  # -->
-        self.qr_num2 = QuantumRegister(n, "num2")  # -->
+        self.qr_num1 = QuantumRegister(n, "num1")  # --> input 1
+        self.qr_num2 = QuantumRegister(n, "num2")  # --> input 2
         self.qr_cout0 = QuantumRegister(1, "cout0")
-        self.qr_num3 = QuantumRegister(n, "num3")  # -->
+        self.qr_num3 = QuantumRegister(n, "num3")  # --> input 3
         self.qr_anc0 = QuantumRegister(1, "anc0")
         self.qr_cout1 = QuantumRegister(1, "cout1")
         self.qr_anc1 = QuantumRegister(1, "anc1")
         self.cr = ClassicalRegister(n + 2, "cr")
-        self.cr_x = ClassicalRegister(3, "crx")
-        self.cr_y = ClassicalRegister(3, "cry")
-        self.cr_z = ClassicalRegister(3, "crz")
+        self.cr_x = ClassicalRegister(n, "crx")
+        self.cr_y = ClassicalRegister(n, "cry")
+        self.cr_z = ClassicalRegister(n, "crz")
         self.qr_ancilla_grover = QuantumRegister(1, "anc_grover")
 
         self.qc = QuantumCircuit(
@@ -36,7 +37,6 @@ class TripleAdder:
             self.qr_cout1,
             self.qr_anc1,
             self.qr_ancilla_grover,
-            # self.cr,
             self.cr_x,
             self.cr_y,
             self.cr_z,
@@ -94,6 +94,11 @@ class TripleAdder:
             self.cr,
         )
 
+    def append_measure_to_inputs(self):
+        self.qc.measure(self.qr_num1[:], self.cr_x[:])
+        self.qc.measure(self.qr_num2[:], self.cr_y[:])
+        self.qc.measure(self.qr_num3[:], self.cr_z[:])
+
     def get_circuit(self):
         return self.qc
 
@@ -112,101 +117,163 @@ class TripleAdder:
         decoded.sort(reverse=True, key=lambda x: x[1])
         return decoded
 
-
-
-choice = input("Do you wish to delete temp.txt (Y/N)?: ")
-
-if choice.lower() == 'y':
-    import os
-    os.remove("temp.txt")
-
-num_bits = 3
-adder = TripleAdder(num_bits=num_bits)
-adder.initialize_inputs(2, 0, 2, randomize=True)
-
-for _ in range(12):
-    adder.build_adders()
-
-    # ********************* Insert Grover Oracle here **********************
-
-    target = 15
-    target_bin = format(target, f"0{num_bits+2}b")[::-1]
-    # print(target_bin)
-    sum_bits = adder.qr_num3[:] + adder.qr_anc0[:] + adder.qr_cout1[:]
-
-    # for _ in range(2):
-
-    adder.qc.h(adder.qr_ancilla_grover[:])
-    adder.qc.z(adder.qr_ancilla_grover[:])
-
-    for i in range(len(target_bin) - 1, -1, -1):
-        if target_bin[i] == "0":
-            adder.qc.x(sum_bits[i])
-
-    adder.qc.mcx(sum_bits, adder.qr_ancilla_grover[:])
-
-    for i in range(len(target_bin) - 1, -1, -1):
-        if target_bin[i] == "0":
-            adder.qc.x(sum_bits[i])
-
-
-    # adder.qc.z(adder.qr_ancilla_grover[:])
-    # adder.qc.h(adder.qr_ancilla_grover[:])
-    adder.qc.compose(
-        adder.adder2.inverse(),
-        qubits=(
-            adder.qr_num2[:]
-            + adder.qr_cout0[:]
-            + adder.qr_num3[:]
-            + adder.qr_anc0[:]
-            + adder.qr_cout1[:]
-            + adder.qr_anc1[:]
-        ),
-        inplace=True,
-    )
-
-    adder.qc.compose(
-        adder.adder1.inverse(),
-        qubits=(
-            adder.qr_num1[:] + adder.qr_num2[:] + adder.qr_cout0[:] + adder.qr_anc0[:]
-        ),
-        inplace=True,
-    )
-    # *************************** Oracle ends ******************************
-
-    # ********************* Insert Grover diffuser here ********************
-    qubits = adder.qr_num1[:] + adder.qr_num2[:] + adder.qr_num3[:]
-    adder.qc.h(qubits)
-    adder.qc.x(qubits)
-    # adder.qc.h(qubits[-1])
-    adder.qc.mcx(qubits[:], adder.qr_ancilla_grover[:])
-    # adder.qc.h(qubits[-1])
-    adder.qc.x(qubits)
-    adder.qc.h(qubits)
-# *************************** Diffuser ends ****************************
-
-adder.qc.measure(adder.qr_num1[:], adder.cr_x[:])
-adder.qc.measure(adder.qr_num2[:], adder.cr_y[:])
-adder.qc.measure(adder.qr_num3[:], adder.cr_z[:])
-# adder.qc.draw("mpl")
-# plt.show()
-
-counts = adder.run(shots=10000)
-tot = 0
-
-# plot_histogram(counts, filename='temp.png')
-# plt.show()
-
-counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
-
-
-for value, freq in counts:
-    x, y, z = [int(val, 2) for val in value.split()]
-    tot += freq
-    with open("temp.txt", "a") as file:
-        file.write(
-            f"x = {x}, y = {y}, z = {z}, Sum = {x + y + z}, Frequency = {freq}\n"
+    def build_inverse_adder(self):
+        self.qc.compose(
+            self.adder2.inverse(),
+            qubits=(
+                self.qr_num2[:]
+                + self.qr_cout0[:]
+                + self.qr_num3[:]
+                + self.qr_anc0[:]
+                + self.qr_cout1[:]
+                + self.qr_anc1[:]
+            ),
+            inplace=True,
         )
-print(f"Frequency = {tot}")
 
-    
+        self.qc.compose(
+            self.adder1.inverse(),
+            qubits=(
+                self.qr_num1[:] + self.qr_num2[:] + self.qr_cout0[:] + self.qr_anc0[:]
+            ),
+            inplace=True,
+        )
+
+    def get_input_qubits(self) -> list[QuantumRegister]:
+        return self.qr_num1[:] + self.qr_num2[:] + self.qr_num3[:]
+
+
+class GroverSearch(TripleAdder):
+    def __init__(self, num_bits: int):
+        super().__init__(num_bits)
+        self.num_bits = num_bits
+        self.initialize_inputs()
+
+    def apply_grover_op(self, num_iterations: int, target: int = 15):
+        self.target = target
+        for _ in range(num_iterations):
+            self.__generate_oracle(target)
+            diffuser = self.__generate_diffuser()
+            self.qc.compose(
+                diffuser,
+                qubits=self.get_input_qubits() + self.qr_ancilla_grover[:],
+                inplace=True,
+            )
+
+    def __generate_oracle(self, target: int = 15):
+        self.build_adders()
+
+        query = self.__generate_query_circuit(target=target)
+
+        self.qc.compose(
+            query,
+            qubits=self.qr_num3[:]
+            + self.qr_anc0[:]
+            + self.qr_cout1[:]
+            + self.qr_ancilla_grover[:],
+            inplace=True,
+        )
+
+        self.build_inverse_adder()
+
+    def __generate_diffuser(self):
+        num_qubits = 3 * self.num_bits
+        num_ancillas = 1
+        total_qubits = num_qubits + num_ancillas
+
+        diffuser = QuantumCircuit(total_qubits, 0, name="diffuser")
+        diffuser.h(range(num_qubits))
+        diffuser.x(range(num_qubits))
+        diffuser.mcx(list(range(num_qubits)), total_qubits - 1)
+        diffuser.x(range(num_qubits))
+        diffuser.h(range(num_qubits))
+
+        return diffuser
+
+    def __generate_query_circuit(self, target: int = 15) -> QuantumCircuit:
+        num_sum_qubits = self.num_bits + 2
+        num_ancillas = 1
+        total_qubits = num_sum_qubits + num_ancillas
+        query = QuantumCircuit(total_qubits, 0, name="query")
+
+        query.h(total_qubits - 1)
+        query.z(total_qubits - 1)
+
+        target_bin = format(target, f"0{num_sum_qubits}b")[::-1]
+
+        for i in range(num_sum_qubits - 1, -1, -1):
+            if target_bin[i] == "0":
+                query.x(i)
+
+        query.mcx(list(range(num_sum_qubits)), total_qubits - 1)
+
+        for i in range(num_sum_qubits - 1, -1, -1):
+            if target_bin[i] == "0":
+                query.x(i)
+
+        return query
+
+    @staticmethod
+    def optimal_grover_iterations(target, num_bits) -> int:
+        N = 2 ** (3 * num_bits)
+        M = GroverSearch.count_solutions(target, num_bits)
+        if M <= 0:
+            return 0
+        theta = arcsin(sqrt(M / N))
+
+        R = pi / (4 * theta)
+        candidates = [math.floor(R), math.ceil(R)]
+
+        # Find which candidate is closer to ideal angle pi/2
+        best_r = min(candidates, key=lambda r: abs((2 * r + 1) * theta - pi / 2))
+        return best_r
+
+    @staticmethod
+    def count_solutions(target, num_bits):
+        f"""
+        Counts the number of solutions (M) to:
+        x + y + z = {target}
+        where 0 <= x, y, z < 2^{num_bits}
+        """
+        n = target
+        U = 2**num_bits  # Upper bound + 1
+        total = 0
+        for j in range(4):  # 0, 1, 2, 3
+            val = n - j * U
+            if val < 0:
+                break
+            total += ((-1) ** j) * math.comb(3, j) * math.comb(val + 2, 2)
+        return total
+
+
+if __name__ == "__main__":
+    choice = input("Do you wish to delete temp.txt (Y/N)?: ")
+
+    if os.path.exists("temp.txt"):
+        os.remove("temp.txt") 
+
+    num_bits = 4
+    N = (2**num_bits) ** 3
+
+    max_value = ((2**num_bits) - 1) * 3
+
+    for target in range(max_value + 1):
+        num_iterations = GroverSearch.optimal_grover_iterations(target, num_bits)
+        circ = GroverSearch(num_bits=num_bits)
+        circ.apply_grover_op(num_iterations, target=target)
+        circ.append_measure_to_inputs()
+        counts = circ.run(shots=10000)
+        tot = 0
+
+        counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+
+        for value, freq in counts:
+            x, y, z = [int(val, 2) for val in value.split()]
+            tot += freq if x + y + z == target else 0
+            # with open("temp.txt", "a") as file:
+            #     file.write(
+            #         f"x = {x}, y = {y}, z = {z}, Sum = {x + y + z}, Frequency = {freq}\n"
+            #     )
+        print(
+            f"Frequency when target is {target} = {tot} (Number of iterations = {num_iterations})"
+        )
