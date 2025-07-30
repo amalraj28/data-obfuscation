@@ -1,9 +1,8 @@
 from qiskit import QuantumCircuit, transpile, QuantumRegister, ClassicalRegister
 from qiskit.circuit.library import CDKMRippleCarryAdder
 from qiskit_aer import AerSimulator
-import math
-from numpy import arcsin, pi, sqrt
 import os
+from math_utils import optimal_grover_iterations
 
 
 class TripleAdder:
@@ -213,44 +212,10 @@ class GroverSearch(TripleAdder):
 
         return query
 
-    @staticmethod
-    def optimal_grover_iterations(target, num_bits) -> int:
-        N = 2 ** (3 * num_bits)
-        M = GroverSearch.count_solutions(target, num_bits)
-        if M <= 0:
-            return 0
-        theta = arcsin(sqrt(M / N))
-
-        R = pi / (4 * theta)
-        candidates = [math.floor(R), math.ceil(R)]
-
-        # Find which candidate is closer to ideal angle pi/2
-        best_r = min(candidates, key=lambda r: abs((2 * r + 1) * theta - pi / 2))
-        return best_r
-
-    @staticmethod
-    def count_solutions(target, num_bits):
-        f"""
-        Counts the number of solutions (M) to:
-        x + y + z = {target}
-        where 0 <= x, y, z < 2^{num_bits}
-        """
-        n = target
-        U = 2**num_bits  # Upper bound + 1
-        total = 0
-        for j in range(4):  # 0, 1, 2, 3
-            val = n - j * U
-            if val < 0:
-                break
-            total += ((-1) ** j) * math.comb(3, j) * math.comb(val + 2, 2)
-        return total
-
 
 if __name__ == "__main__":
-    choice = input("Do you wish to delete temp.txt (Y/N)?: ")
-
     if os.path.exists("temp.txt"):
-        os.remove("temp.txt") 
+        os.remove("temp.txt")
 
     num_bits = 4
     N = (2**num_bits) ** 3
@@ -258,7 +223,7 @@ if __name__ == "__main__":
     max_value = ((2**num_bits) - 1) * 3
 
     for target in range(max_value + 1):
-        num_iterations = GroverSearch.optimal_grover_iterations(target, num_bits)
+        num_iterations = optimal_grover_iterations(num_bits, target)
         circ = GroverSearch(num_bits=num_bits)
         circ.apply_grover_op(num_iterations, target=target)
         circ.append_measure_to_inputs()
