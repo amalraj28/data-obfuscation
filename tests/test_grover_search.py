@@ -2,9 +2,9 @@ import unittest
 from qiskit import QuantumCircuit, transpile
 from qiskit_aer import AerSimulator
 
-from adder_builder import AdderBuilder
-from grover_search import GroverSearch
-from math_utils import optimal_grover_iterations
+from circuits.adder_builder import AdderBuilder
+from algorithms.grover_search import GroverSearch
+from utils.math_utils import optimal_grover_iterations
 
 
 class TestGroverSearch(unittest.TestCase):

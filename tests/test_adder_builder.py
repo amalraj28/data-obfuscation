@@ -1,8 +1,8 @@
 import unittest
 from qiskit import QuantumCircuit, transpile
 from qiskit_aer import AerSimulator
-from adder_builder import AdderBuilder
-from circuit_initializer import CircuitInitializer
+from circuits.adder_builder import AdderBuilder
+from circuits.circuit_initializer import CircuitInitializer
 
 
 class TestAdderBuilder(unittest.TestCase):

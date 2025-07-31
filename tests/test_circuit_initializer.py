@@ -1,7 +1,7 @@
 # tests/test_circuit_initializer.py
 import unittest
 from qiskit import QuantumCircuit
-from circuit_initializer import CircuitInitializer
+from circuits.circuit_initializer import CircuitInitializer
 
 
 class TestCircuitInitializer(unittest.TestCase):

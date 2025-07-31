@@ -3,7 +3,7 @@ from qiskit.circuit import Gate
 from qiskit_aer import AerSimulator
 from qiskit import QuantumCircuit, transpile
 from qiskit_aer import AerSimulator
-from adder_interface import AdderInterface
+from circuits.adder_interface import AdderInterface
 
 class GroverSearch:
     def __init__(self, adder: AdderInterface):

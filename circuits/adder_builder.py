@@ -2,7 +2,7 @@
 from qiskit import QuantumCircuit
 from qiskit.circuit import Gate
 from qiskit.circuit.library import CDKMRippleCarryAdder
-from adder_interface import AdderInterface
+from circuits.adder_interface import AdderInterface
 
 class AdderBuilder(AdderInterface):
     """

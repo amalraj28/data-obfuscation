@@ -1,5 +1,5 @@
 import unittest
-from math_utils import count_solutions, optimal_grover_iterations
+from utils.math_utils import count_solutions, optimal_grover_iterations
 
 
 class TestMathUtils(unittest.TestCase):
