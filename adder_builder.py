@@ -2,9 +2,9 @@
 from qiskit import QuantumCircuit
 from qiskit.circuit import Gate
 from qiskit.circuit.library import CDKMRippleCarryAdder
+from adder_interface import AdderInterface
 
-
-class AdderBuilder:
+class AdderBuilder(AdderInterface):
     """
     Builds a composite gate for adding three k-bit numbers (x, y, z).
     Uses two CDKMRippleCarryAdders internally:
@@ -14,6 +14,9 @@ class AdderBuilder:
 
     def __init__(self, num_bits: int):
         self.num_bits = num_bits
+    
+    def build_adder_gate(self) -> Gate:
+        return self.build_triple_adder_gate()
 
     def build_triple_adder_gate(self) -> Gate:
         """Creates a composite gate for adding three numbers."""
