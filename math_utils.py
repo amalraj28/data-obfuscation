@@ -12,11 +12,7 @@ def optimal_grover_iterations(num_bits: int, target: int, num_vars: int = 3) -> 
     theta = arcsin(sqrt(M / N))
 
     R = pi / (4 * theta)
-    candidates = [math.floor(R), math.ceil(R)]
-
-    # Find which candidate is closer to ideal angle pi/2
-    best_r = min(candidates, key=lambda r: abs((2 * r + 1) * theta - pi / 2))
-    return best_r
+    return max(1, round(R))
 
 
 def count_solutions(num_bits: int, n: int, num_vars: int = 3) -> int:
