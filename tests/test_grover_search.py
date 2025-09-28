@@ -3,7 +3,7 @@ from qiskit import QuantumCircuit, transpile
 from qiskit_aer import AerSimulator
 
 from circuits.adder_builder import AdderBuilder
-from algorithms.grover_search import GroverSearch
+from circuits.grover_search import GroverSearch
 from utils.math_utils import optimal_grover_iterations
 
 

@@ -1,0 +1,8 @@
+N = 7
+n = 2
+num_iterations = 3
+run_time = 0.31716227531433105
+num_gates = OrderedDict([('cx', 99), ('p', 93), ('rz', 60), ('u', 42), ('u3', 42), ('mcx_vchain', 30), ('h', 24), ('MAJ', 15), ('UMA', 15), ('UMA_dg', 15), ('MAJ_dg', 15), ('mcx_vchain_dg', 15), ('u2', 9), ('cu1', 6), ('ccx', 6), ('measure', 6), ('u1', 3), ('rcccx', 3), ('rcccx_dg', 3), ('c3sx', 3), ('crz', 3)])
+num_solutions = 6
+depth = 359
+num_qubits = 11
