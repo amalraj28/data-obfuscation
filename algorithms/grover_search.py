@@ -8,10 +8,10 @@ from circuits.adder_interface import AdderInterface
 class GroverSearch:
     def __init__(self, adder: AdderInterface):
         self.adder = adder
-        self.adder_gate = adder.build_adder_gate()
+        self.adder_gate = self.adder.build_adder_gate()
 
         # Mapping of registers (x, y, z)
-        self.mapping = adder.get_mapping()
+        self.mapping = self.adder.get_mapping()
         self.num_bits = len(self.mapping["x"])
 
         # Total qubits: adder + 1 Grover ancilla
