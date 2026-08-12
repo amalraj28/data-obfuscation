@@ -1,0 +1,8 @@
+N = 190
+n = 7
+num_iterations = 10
+run_time = 27.778936624526978
+num_gates = OrderedDict({'u': 62329, 'unitary': 40580, 'u3': 26, 'measure': 21})
+num_solutions = 975
+depth = 84904
+num_qubits = 26

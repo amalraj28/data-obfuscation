@@ -1,0 +1,8 @@
+N = 6
+n = 2
+num_iterations = 2
+run_time = 0.17852210998535156
+num_gates = OrderedDict({'cx': 640, 't': 224, 'h': 207, 'p': 182, 'tdg': 168, 'rz': 40, 'x': 32, 'u1': 32, 'cu1': 18, 'u2': 16, 'measure': 6, 'crz': 2, 'z': 1})
+num_solutions = 10
+depth = 1036
+num_qubits = 11
