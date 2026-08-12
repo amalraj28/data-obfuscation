@@ -1,2 +1,22 @@
 venv/
 __pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# New experiment runs are staged here. Move intentional outputs into the
+# tracked results directory before committing them.
+results/generated/
+
+# LaTeX build products.
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz

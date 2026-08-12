@@ -1,12 +1,15 @@
 from qiskit import QuantumCircuit, transpile
 from qiskit.circuit import Gate
 from qiskit_aer import AerSimulator
-from qiskit import QuantumCircuit, transpile
-from qiskit_aer import AerSimulator
+
 from circuits.adder_interface import AdderInterface
 
+
 class GroverSearch:
-    def __init__(self, adder: AdderInterface):
+    def __init__(
+        self,
+        adder: AdderInterface,
+    ):
         self.adder = adder
         self.adder_gate = self.adder.build_adder_gate()
 
@@ -20,7 +23,14 @@ class GroverSearch:
         self.grover_ancilla = self.num_qubits - 1
         self.qc = QuantumCircuit(self.num_qubits, len(self.input_qubits))
 
-    def __build_query(self, target: int):
+    def _validate_target(self, target: int) -> None:
+        max_sum = 3 * ((1 << self.num_bits) - 1)
+        if not isinstance(target, int) or isinstance(target, bool):
+            raise TypeError("target must be an integer")
+        if not 0 <= target <= max_sum:
+            raise ValueError(f"target must be between 0 and {max_sum}")
+
+    def _build_query_circuit(self, target: int) -> QuantumCircuit:
         """
         Builds the query subcircuit that flips the Grover ancilla when the
         sum of x, y, z equals the target value.
@@ -30,55 +40,73 @@ class GroverSearch:
         total_qubits = num_sum_qubits + num_ancillas
         query = QuantumCircuit(total_qubits, 0, name="query")
 
-        query.h(total_qubits - 1)
-        query.z(total_qubits - 1)
+        self._validate_target(target)
 
         target_bin = format(target, f"0{num_sum_qubits}b")[::-1]
 
-        for i in range(num_sum_qubits - 1, -1, -1):
-            if target_bin[i] == "0":
-                query.x(i)
+        x_qubits = {i for i in range(num_sum_qubits) if target_bin[i] == "0"}
 
-        query.mcx(list(range(num_sum_qubits)), total_qubits - 1)
+        mcx_circuit = QuantumCircuit(total_qubits, 0)
+        for qubit in x_qubits:
+            mcx_circuit.x(qubit)
+        mcx_circuit.mcx(
+            list(range(num_sum_qubits)),
+            total_qubits - num_ancillas,
+        )
+        for qubit in x_qubits:
+            mcx_circuit.x(qubit)
 
-        for i in range(num_sum_qubits - 1, -1, -1):
-            if target_bin[i] == "0":
-                query.x(i)
+        query.compose(mcx_circuit, inplace=True)
 
-        return query.to_gate(label="Query")
+        return query
 
-    def build_oracle(self, target: int) -> Gate:
-        """
-        Builds the oracle as per original design:
-        - Apply adder
-        - Apply query circuit for target sum
-        - Uncompute adder
-        """
-        oracle = QuantumCircuit(self.num_qubits, name="Oracle")
-
-        # Apply adder
-        oracle.append(self.adder_gate, range(self.adder_gate.num_qubits))
-
-        # Build query circuit
-        query = self.__build_query(target)
-
-        # Attach query on z-register + ancillas + grover ancilla
+    def build_oracle_circuit(
+        self,
+        target: int,
+    ) -> QuantumCircuit:
+        """Build an oracle circuit whose internal operations remain visible."""
+        oracle = QuantumCircuit(
+            self.num_qubits,
+            name="Oracle",
+        )
+        adder_qubits = list(range(self.adder_gate.num_qubits))
         sum_qubits = self.adder.get_result_qubits()
-        oracle.compose(query, qubits=sum_qubits + [self.grover_ancilla], inplace=True)
+        query_qubits = sum_qubits + [self.grover_ancilla]
 
-        # Uncompute adder
-        oracle.append(self.adder_gate.inverse(), range(self.adder_gate.num_qubits))
+        adder_circuit = self.adder_gate.definition
+        if adder_circuit is None:
+            raise ValueError("Adder gate has no circuit definition")
 
-        return oracle.to_gate(label="Oracle")
+        oracle.compose(
+            adder_circuit,
+            qubits=adder_qubits,
+            inplace=True,
+        )
+        oracle.compose(
+            self._build_query_circuit(target),
+            qubits=query_qubits,
+            inplace=True,
+        )
+        oracle.compose(
+            adder_circuit.inverse(),
+            qubits=adder_qubits,
+            inplace=True,
+        )
 
-    def build_diffuser(self) -> Gate:
-        """
-        Diffuser as in your code: apply H, X, MCX, undo.
-        Applies only to input qubits + grover ancilla.
-        """
+        return oracle
+
+    def build_oracle_gate(
+        self,
+        target: int,
+    ) -> Gate:
+        """Build the oracle as a compact gate for unobfuscated circuits."""
+        return self.build_oracle_circuit(target).to_gate(label="Oracle")
+
+    def build_diffuser_circuit(self) -> QuantumCircuit:
+        """Build a diffuser circuit whose internal operations remain visible."""
         num_qubits = len(self.input_qubits)
         total_qubits = num_qubits + 1
-        diffuser = QuantumCircuit(total_qubits, 0, name="diffuser")
+        diffuser = QuantumCircuit(total_qubits, 0, name="Diffuser")
 
         diffuser.h(range(num_qubits))
         diffuser.x(range(num_qubits))
@@ -86,17 +114,50 @@ class GroverSearch:
         diffuser.x(range(num_qubits))
         diffuser.h(range(num_qubits))
 
-        return diffuser.to_gate(label="Diffuser")
+        return diffuser
 
-    def apply_grover_iterations(self, target: int, iterations: int):
+    def build_diffuser_gate(self) -> Gate:
+        """Build the diffuser as a compact gate for unobfuscated circuits."""
+        return self.build_diffuser_circuit().to_gate(label="Diffuser")
+
+    def apply_grover_iterations(
+        self,
+        target: int,
+        iterations: int,
+        expand_components: bool = False,
+    ) -> None:
+        self._validate_target(target)
+        if not isinstance(iterations, int) or isinstance(iterations, bool):
+            raise TypeError("iterations must be an integer")
+        if iterations < 0:
+            raise ValueError("iterations must be non-negative")
+
         # Superposition initialization
         self.qc.h(self.input_qubits)
+        # Prepare the phase-kickback ancilla once; every oracle and diffuser
+        # preserves it in |->.
+        self.qc.h(self.grover_ancilla)
+        self.qc.z(self.grover_ancilla)
 
+        diffuser_qubits = self.input_qubits + [self.grover_ancilla]
+
+        if expand_components:
+            oracle_circuit = self.build_oracle_circuit(target)
+            diffuser_circuit = self.build_diffuser_circuit()
+            for _ in range(iterations):
+                self.qc.compose(oracle_circuit, inplace=True)
+                self.qc.compose(
+                    diffuser_circuit,
+                    qubits=diffuser_qubits,
+                    inplace=True,
+                )
+            return
+
+        oracle_gate = self.build_oracle_gate(target)
+        diffuser_gate = self.build_diffuser_gate()
         for _ in range(iterations):
-            oracle = self.build_oracle(target)
-            diffuser = self.build_diffuser()
-            self.qc.append(oracle, range(self.num_qubits))
-            self.qc.append(diffuser, self.input_qubits + [self.grover_ancilla])
+            self.qc.append(oracle_gate, range(self.num_qubits))
+            self.qc.append(diffuser_gate, diffuser_qubits)
 
     def measure_inputs(self):
         self.qc.measure(self.input_qubits, range(len(self.input_qubits)))
@@ -110,7 +171,7 @@ class GroverSearch:
     def decode_results(self, counts: dict[str, int]) -> list[dict]:
         """
         Decodes measured bitstrings into a structured format using the adder's mapping.
-        
+
         :param counts: Dictionary from Qiskit get_counts() {bitstring: frequency}
         :return: List of dictionaries, each like:
                 {"x": val_x, "y": val_y, "z": val_z, "freq": frequency}
@@ -122,11 +183,16 @@ class GroverSearch:
         for bitstring, freq in counts.items():
             result = {}
             for reg_name, indices in mapping.items():
-                # Extract bits for this register
-                bits_for_reg = ''.join(bitstring[i] for i in indices)
+                bits_for_reg = "".join(
+                    bitstring[-1 - index] for index in reversed(indices)
+                )
                 result[reg_name] = int(bits_for_reg, 2)
             result["freq"] = freq
             decoded.append(result)
 
         # Sort by frequency descending
-        return sorted(decoded, key=lambda d: d["freq"], reverse=True)
+        return sorted(
+            decoded,
+            key=lambda d: d["freq"],
+            reverse=True,
+        )
