@@ -1,38 +1,90 @@
 # Data Obfuscation using Decomposition and Grover Amplification
 
-This is the codebase for our work involving obfuscation of classical data in a quantum-classical hybrid system.
+This repository explores basis obfuscation of Grover-search circuits for a
+quantum-classical data workflow. The obfuscator changes the local basis at each
+gate boundary while preserving the circuit's behavior.
 
-## Code Structure
+## Repository layout
 
-The code has been prepared inculcate SOLID principles as far as possible. The folders are organized as follows:
+- `algorithms/`: whole-circuit basis obfuscation and supporting algorithms.
+- `circuits/`: the three-input adder and Grover circuit construction.
+- `utils/`: circuit serialization and mathematical helpers.
+- `tests/`: unit and integration tests.
+- `results/`: retained experiment summaries and figures.
 
-1. `algorithms`: Aimed to organize generalized algorithms. (Intended for future works. You can discard this)
-2. `circuits`: Contains codes for the various circuits utilized in our work. Includes functionalities for building the custom adder and Grover search algorithm.
-3. `tests`: Some test cases written for utilities and grover search
-4. `utils`: Contains helper functions.
+## Setup
 
-## Get Started
+Create and activate a virtual environment, then install the dependencies:
 
-1. Make sure Python is installed in your system. This can be done in several ways, one way is to check the Python version.
-2. Clone this repo using `git clone` and cd into the folder.
-```(git)
-  git clone https://github.com/amalraj28/data-obfuscation
-  cd data-obfuscation
+```bash
+python -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
 ```
-2. Set up your virtual environment using the `virtualenv` python package, and activate it.
-For Windows:
-```
-  python -m virtualenv name_of_environment
-  name_of_environment/Scripts/activate.ps1
-```
-For Linux:
-```
-  python3 -m virtualenv name_of_environment
-  source venv/bin/activate
-```
-3. Install the required packages.
-```
-  pip install -r requirements.txt
-```
-4. `main.py` is the entry point to the code. Run `main.py`
 
+On Windows, activate the environment with `venv\Scripts\activate` instead.
+
+## Run an experiment
+
+Run the default experiment directly:
+
+```bash
+python main.py
+```
+
+New outputs are written to the ignored `results/generated/` directory. A
+default run produces OpenQASM 3, a text summary, and a JSON manifest. The
+manifest reports metrics from the same circuit that was exported and executed.
+
+The default target is 19. Before obfuscation, the compact Grover circuit is
+transpiled once to `u` and `cx` gates. This avoids constructing dense matrices
+for wide operations and keeps the default run practical on an ordinary
+computer.
+
+The runner is also a normal Python function:
+
+```python
+from main import main
+
+result = main(
+    target=5,
+    shots=1024,
+    obfuscate=True,
+    output_dir="results/generated",
+    draw=False,
+    overwrite=False,
+)
+```
+
+Set `draw=True` to also render the complete circuit. For target 19 this image
+is very large and Matplotlib can take several minutes and substantial memory,
+so drawing is disabled by default. Set `overwrite=True` only when replacing
+files for the same target and mode is intentional.
+
+## Obfuscation API
+
+```python
+from algorithms.basis_transformation import apply_basis_obfuscation
+
+obfuscated_circuit = apply_basis_obfuscation(circuit)
+```
+
+`apply_basis_obfuscation` uses secure operating-system randomness. There is no
+seeded production mode, so repeated calls normally produce different but
+semantically equivalent circuits.
+
+Before obfuscation, `main.py` lowers the complete Grover circuit to `u` and
+`cx` gates with Qiskit's optimization level 0. This keeps the transformation
+matrices small while avoiding optimization-driven changes to the algorithm.
+
+## Tests
+
+Run the complete suite with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The suite covers circuit equivalence, wide MCX gates, QASM round trips,
+measurements and classical control, experiment reporting, and output
+protection.
