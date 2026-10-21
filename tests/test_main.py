@@ -10,17 +10,6 @@ import main as experiment
 
 
 class TestMain(unittest.TestCase):
-    def test_prepares_only_small_basis_gates_for_obfuscation(self):
-        circuit = QuantumCircuit(4)
-        circuit.mcx([0, 1, 2], 3)
-
-        prepared = experiment._prepare_for_obfuscation(circuit)
-
-        self.assertTrue(
-            all(item.operation.num_qubits <= 2 for item in prepared.data)
-        )
-        self.assertTrue(set(prepared.count_ops()).issubset({"u", "cx"}))
-
     def test_reports_the_exact_selected_circuit(self):
         with tempfile.TemporaryDirectory() as directory:
             captured = {}
@@ -50,7 +39,9 @@ class TestMain(unittest.TestCase):
             manifest = json.loads(result["paths"]["manifest"].read_text())
             self.assertEqual(manifest, result["manifest"])
             self.assertTrue(result["paths"]["qasm"].exists())
-            self.assertTrue(result["paths"]["result"].exists())
+            self.assertNotIn("result", manifest["files"])
+            self.assertNotIn("figure", manifest["files"])
+            self.assertNotIn("original_figure", manifest["files"])
 
     def test_unobfuscated_mode_and_overwrite_protection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -79,7 +70,7 @@ class TestMain(unittest.TestCase):
                         draw=False,
                     )
 
-    def test_draws_only_the_complete_output_circuit(self):
+    def test_draws_only_the_original_in_unobfuscated_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(
                 experiment,
@@ -95,11 +86,41 @@ class TestMain(unittest.TestCase):
                 )
 
             draw.assert_called_once()
-            self.assertIs(draw.call_args.args[0], result["output_circuit"])
+            self.assertIs(draw.call_args.args[0], result["original_circuit"])
             self.assertEqual(
                 Path(draw.call_args.kwargs["filename"]),
-                result["paths"]["figure"],
+                result["paths"]["original_figure"],
             )
+            self.assertNotIn("figure", result["paths"])
+            self.assertNotIn("figure", result["manifest"]["files"])
+            self.assertIn("original_figure", result["manifest"]["files"])
+
+    def test_draws_original_and_obfuscated_circuits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(
+                experiment, "_execute", return_value=({"001": 1}, 0.1)
+            ), patch.object(QuantumCircuit, "draw", autospec=True) as draw:
+                result = experiment.main(
+                    target=1, shots=1, obfuscate=True,
+                    output_dir=directory, draw=True,
+                )
+
+            self.assertEqual(draw.call_count, 2)
+            for call, circuit, key in zip(
+                draw.call_args_list,
+                (result["original_circuit"], result["output_circuit"]),
+                ("original_figure", "figure"),
+            ):
+                self.assertIs(call.args[0], circuit)
+                self.assertEqual(Path(call.kwargs["filename"]), result["paths"][key])
+                self.assertEqual(result["manifest"]["files"][key], result["paths"][key].name)
+
+    def test_original_image_is_protected_from_overwrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = experiment._output_paths(Path(directory), 1, "obfuscated")
+            paths["original_figure"].touch()
+            with self.assertRaises(FileExistsError):
+                experiment.main(target=1, output_dir=directory, draw=True)
 
 
 if __name__ == "__main__":

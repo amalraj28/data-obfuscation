@@ -17,7 +17,6 @@ DEFAULT_TARGET = 19
 DEFAULT_SHOTS = 1024
 DEFAULT_OBFUSCATE = True
 DEFAULT_OUTPUT_DIR = Path("results/generated")
-OBFUSCATION_BASIS_GATES = ["u", "cx"]
 
 
 def _execute(
@@ -38,13 +37,15 @@ def _output_paths(
     target: int,
     mode: str,
 ) -> dict[str, Path]:
-    stem = f"target_{target}_{mode}"
-    return {
+    stem = f"target_{target}"
+    paths = {
         "qasm": output_dir / f"{stem}_circuit.qasm",
-        "figure": output_dir / f"{stem}_circuit.png",
-        "result": output_dir / f"{stem}_result.txt",
+        "original_figure": output_dir / f"{stem}_original_circuit.png",
         "manifest": output_dir / f"{stem}_manifest.json",
     }
+    if mode == "obfuscated":
+        paths["figure"] = output_dir / f"{stem}_obfuscated_circuit.png"
+    return paths
 
 
 def _ensure_outputs_available(
@@ -52,22 +53,14 @@ def _ensure_outputs_available(
     draw: bool,
     overwrite: bool,
 ) -> None:
-    required = [paths["qasm"], paths["result"], paths["manifest"]]
+    required = [paths["qasm"], paths["manifest"]]
     if draw:
-        required.append(paths["figure"])
+        required.extend(path for name, path in paths.items() if name.endswith("figure"))
 
     existing = [path for path in required if path.exists()]
     if existing and not overwrite:
         names = ", ".join(path.name for path in existing)
         raise FileExistsError(f"Output already exists: {names}")
-
-
-def _prepare_for_obfuscation(circuit: QuantumCircuit) -> QuantumCircuit:
-    return transpile(
-        circuit,
-        basis_gates=OBFUSCATION_BASIS_GATES,
-        optimization_level=0,
-    )
 
 
 def main(
@@ -99,16 +92,12 @@ def main(
     grover.apply_grover_iterations(target, iterations)
     grover.measure_inputs()
 
-    original_circuit = grover.qc
+    original_circuit = grover.qc.decompose(reps=1)
+
     output_circuit = (
-        apply_basis_obfuscation(
-            _prepare_for_obfuscation(
-                original_circuit,
-            ),
-        )
-        if obfuscate
-        else original_circuit
+        apply_basis_obfuscation(original_circuit) if obfuscate else original_circuit
     )
+
     counts, run_time = _execute(output_circuit, shots)
     decoded = grover.decode_results(counts)
     correct_results = [
@@ -138,41 +127,28 @@ def main(
         "files": {
             name: path.name
             for name, path in paths.items()
-            if (name != "figure") or draw
+            if not name.endswith("figure") or draw
         },
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    print("Writing circuit to QASM file...")
+    
     paths["qasm"].write_text(
         circuit_to_qasm(output_circuit),
         encoding="utf-8",
     )
-    paths["result"].write_text(
-        "\n".join(
-            [
-                f"target = {target}",
-                f"num_bits = {num_bits}",
-                f"iterations = {iterations}",
-                f"shots = {shots}",
-                f"mode = {mode}",
-                f"run_time_seconds = {run_time}",
-                f"num_solutions = {len(correct_results)}",
-                f"successful_shots = {successful_shots}",
-                f"success_rate = {successful_shots / shots}",
-                f"depth = {output_circuit.depth()}",
-                f"num_qubits = {output_circuit.num_qubits}",
-                f"gate_counts = {json.dumps(gate_counts, sort_keys=True)}",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+
     paths["manifest"].write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
     if draw:
-        output_circuit.draw("mpl", filename=str(paths["figure"]))
+        original_circuit.draw("mpl", filename=str(paths["original_figure"]))
+        if obfuscate:
+            output_circuit.draw("mpl", filename=str(paths["figure"]))
 
     return {
         "original_circuit": original_circuit,

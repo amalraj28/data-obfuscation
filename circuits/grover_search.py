@@ -17,10 +17,9 @@ class GroverSearch:
         self.mapping = self.adder.get_mapping()
         self.num_bits = len(self.mapping["x"])
 
-        # Total qubits: adder + 1 Grover ancilla
-        self.num_qubits = self.adder_gate.num_qubits + 1
+        # Phase flips use a register MSB, so no Grover ancilla is needed.
+        self.num_qubits = self.adder_gate.num_qubits
         self.input_qubits = self.mapping["x"] + self.mapping["y"] + self.mapping["z"]
-        self.grover_ancilla = self.num_qubits - 1
         self.qc = QuantumCircuit(self.num_qubits, len(self.input_qubits))
 
     def _validate_target(self, target: int) -> None:
@@ -32,13 +31,11 @@ class GroverSearch:
 
     def _build_query_circuit(self, target: int) -> QuantumCircuit:
         """
-        Builds the query subcircuit that flips the Grover ancilla when the
-        sum of x, y, z equals the target value.
+        Apply a phase flip to the target sum, using the sum MSB as the
+        target of a multi-controlled Z implemented as H-MCX-H.
         """
         num_sum_qubits = self.num_bits + 2
-        num_ancillas = 1
-        total_qubits = num_sum_qubits + num_ancillas
-        query = QuantumCircuit(total_qubits, 0, name="query")
+        query = QuantumCircuit(num_sum_qubits, 0, name="query")
 
         self._validate_target(target)
 
@@ -46,13 +43,13 @@ class GroverSearch:
 
         x_qubits = {i for i in range(num_sum_qubits) if target_bin[i] == "0"}
 
-        mcx_circuit = QuantumCircuit(total_qubits, 0)
+        mcx_circuit = QuantumCircuit(num_sum_qubits, 0)
         for qubit in x_qubits:
             mcx_circuit.x(qubit)
-        mcx_circuit.mcx(
-            list(range(num_sum_qubits)),
-            total_qubits - num_ancillas,
-        )
+        msb = num_sum_qubits - 1
+        mcx_circuit.h(msb)
+        mcx_circuit.mcx(list(range(msb)), msb)
+        mcx_circuit.h(msb)
         for qubit in x_qubits:
             mcx_circuit.x(qubit)
 
@@ -71,7 +68,7 @@ class GroverSearch:
         )
         adder_qubits = list(range(self.adder_gate.num_qubits))
         sum_qubits = self.adder.get_result_qubits()
-        query_qubits = sum_qubits + [self.grover_ancilla]
+        query_qubits = sum_qubits
 
         adder_circuit = self.adder_gate.definition
         if adder_circuit is None:
@@ -105,12 +102,14 @@ class GroverSearch:
     def build_diffuser_circuit(self) -> QuantumCircuit:
         """Build a diffuser circuit whose internal operations remain visible."""
         num_qubits = len(self.input_qubits)
-        total_qubits = num_qubits + 1
-        diffuser = QuantumCircuit(total_qubits, 0, name="Diffuser")
+        diffuser = QuantumCircuit(num_qubits, 0, name="Diffuser")
 
         diffuser.h(range(num_qubits))
         diffuser.x(range(num_qubits))
-        diffuser.mcx(list(range(num_qubits)), total_qubits - 1)
+        msb = num_qubits - 1
+        diffuser.h(msb)
+        diffuser.mcx(list(range(msb)), msb)
+        diffuser.h(msb)
         diffuser.x(range(num_qubits))
         diffuser.h(range(num_qubits))
 
@@ -134,12 +133,7 @@ class GroverSearch:
 
         # Superposition initialization
         self.qc.h(self.input_qubits)
-        # Prepare the phase-kickback ancilla once; every oracle and diffuser
-        # preserves it in |->.
-        self.qc.h(self.grover_ancilla)
-        self.qc.z(self.grover_ancilla)
-
-        diffuser_qubits = self.input_qubits + [self.grover_ancilla]
+        diffuser_qubits = self.input_qubits
 
         if expand_components:
             oracle_circuit = self.build_oracle_circuit(target)

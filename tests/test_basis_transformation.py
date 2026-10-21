@@ -3,16 +3,81 @@ import unittest
 from qiskit import QuantumCircuit, qasm3, transpile
 from qiskit.circuit import Instruction
 from qiskit.circuit.library import UnitaryGate
-from qiskit.quantum_info import Operator
+from qiskit.quantum_info import Operator, random_unitary
 from qiskit_aer import AerSimulator
 
-from algorithms.basis_transformation import apply_basis_obfuscation
+from algorithms.basis_transformation import apply_basis_obfuscation, _pad_idle_wires
 from utils.helper import circuit_to_qasm
 
 
 class TestBasisTransformation(unittest.TestCase):
     def assert_equivalent(self, original, obfuscated):
         self.assertTrue(Operator(obfuscated).equiv(Operator(original)))
+
+    def test_padding_fills_idle_wires_and_absorbs_inverse(self):
+        circuit = QuantumCircuit(4)
+        circuit.global_phase = 0.31
+        for index, wires in enumerate(([1, 0], [2, 1], [3, 2])):
+            circuit.unitary(random_unitary(4, seed=index), wires)
+
+        padded = _pad_idle_wires(circuit)
+
+        self.assert_equivalent(circuit, padded)
+        multi = [item for item in padded.data if len(item.qubits) > 1]
+        self.assertEqual([item.qubits for item in multi],
+                         [item.qubits for item in circuit.data])
+        self.assertGreater(len(padded.data), len(circuit.data))
+        self.assertFalse(Operator(multi[1].operation).equiv(
+            Operator(circuit.data[1].operation)))
+        self.assertTrue(all(isinstance(item.operation, UnitaryGate)
+                            and item.operation.label is None for item in padded.data))
+        for qubit in circuit.qubits:
+            self.assertTrue(any(item.qubits == (qubit,) for item in padded.data))
+
+    def test_padding_closes_before_barriers_and_single_qubit_gates(self):
+        circuit = QuantumCircuit(3)
+        circuit.unitary(random_unitary(4, seed=1), [0, 1])
+        circuit.barrier()
+        circuit.x(2)
+        circuit.unitary(random_unitary(4, seed=2), [1, 2])
+        padded = _pad_idle_wires(circuit)
+        self.assert_equivalent(circuit, padded)
+        barrier = next(i for i, item in enumerate(padded.data)
+                       if item.operation.name == "barrier")
+        prefix = QuantumCircuit(3)
+        for item in padded.data[:barrier]:
+            prefix.append(item.operation, item.qubits)
+        expected = QuantumCircuit(3)
+        expected.append(circuit.data[0].operation, [0, 1])
+        self.assert_equivalent(expected, prefix)
+
+    def test_padding_preserves_measurement_reset_and_control(self):
+        circuit = QuantumCircuit(3, 1)
+        circuit.unitary(random_unitary(4, seed=7), [0, 1])
+        circuit.measure(2, 0)
+        circuit.reset(0)
+        with circuit.if_test((circuit.clbits[0], True)):
+            circuit.x(1)
+        circuit.measure(0, 0)
+        padded = _pad_idle_wires(circuit)
+        backend = AerSimulator()
+        counts = backend.run(transpile(padded, backend), shots=64).result().get_counts()
+        self.assertEqual(counts, {"0": 64})
+        self.assertEqual(padded.count_ops().get("if_else"), 1)
+
+    def test_padding_can_be_disabled_and_changes_between_calls(self):
+        circuit = QuantumCircuit(3)
+        circuit.cx(0, 1)
+        circuit.cx(1, 2)
+        circuit.cx(0, 1)
+        circuit.cx(1, 2)
+        plain = apply_basis_obfuscation(circuit, pad_idle_wires=False)
+        first = apply_basis_obfuscation(circuit)
+        second = apply_basis_obfuscation(circuit)
+        self.assertGreater(len(first.data), len(plain.data))
+        self.assertNotEqual(qasm3.dumps(first), qasm3.dumps(second))
+        self.assert_equivalent(circuit, first)
+        self.assert_equivalent(circuit, second)
 
     def test_obfuscates_single_multi_and_wide_mcx_gates(self):
         circuit = QuantumCircuit(4)

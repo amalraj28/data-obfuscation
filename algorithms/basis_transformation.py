@@ -11,6 +11,7 @@ import numpy as np
 from qiskit import QuantumCircuit
 from qiskit.circuit import Qubit, Operation
 from qiskit.circuit.library import UGate, UnitaryGate
+from qiskit.converters import circuit_to_dag
 from qiskit.quantum_info import Operator
 from typing import Iterable
 from numpy.typing import NDArray
@@ -92,17 +93,141 @@ def _is_classical_instruction(operation: Operation):
     return operation.num_clbits > 0 or getattr(operation, "condition", None) is not None
 
 
-def apply_basis_obfuscation(circuit: QuantumCircuit) -> QuantumCircuit:
-    """Return a semantically equivalent circuit in evolving local bases.
+def _fuse_neighboring_single_qubit_gates(circuit: QuantumCircuit) -> QuantumCircuit:
+    """Absorb only the immediately adjacent single-qubit gate on each wire.
 
-    Random bases are sampled with the operating system's secure random source.
-    Multi-qubit operations, including wide MCX gates, remain single operations
-    represented by dense :class:`~qiskit.circuit.library.UnitaryGate` objects.
-
-    Measurements, resets, and classical instructions close the active bases on
-    the wires they touch before being copied.  Unsupported non-unitary quantum
-    instructions raise ``ValueError``.
+    Adjacency is determined before fusion, so removing a gate never makes a
+    second gate eligible. A gate adjacent to two multi-qubit gates chooses one
+    direction at random. Only disjoint-wire instructions may be crossed.
     """
+    before = {}
+    after = {}
+    removed = set()
+
+    def assign(run, left, right, qubit):
+        if not run or (left is None and right is None):
+            return
+        assignments = []
+        if len(run) == 1 and left is not None and right is not None:
+            if _RANDOM.randrange(2) == 0:
+                assignments.append((run[0], left, after))
+            else:
+                assignments.append((run[0], right, before))
+        else:
+            if left is not None:
+                assignments.append((run[0], left, after))
+            if right is not None:
+                assignments.append((run[-1], right, before))
+        for index, anchor, destination in assignments:
+            destination.setdefault(anchor, {})[qubit] = _operator_matrix(
+                circuit.data[index].operation
+            )
+            removed.add(index)
+
+    for qubit in circuit.qubits:
+        left = None
+        run = []
+        for index, instruction in enumerate(circuit.data):
+            if qubit not in instruction.qubits:
+                continue
+            operation = instruction.operation
+            # This pass runs after obfuscation, so only generated unitaries
+            # and basis changes are eligible; directives are hard boundaries.
+            unitary = isinstance(
+                operation, (UnitaryGate, UGate)
+            ) and not _is_classical_instruction(operation)
+            if unitary and operation.num_qubits == 1:
+                run.append(index)
+                continue
+            right = index if unitary and operation.num_qubits > 1 else None
+            assign(run, left, right, qubit)
+            run = []
+            left = right
+        assign(run, left, None, qubit)
+
+    fused = circuit.copy_empty_like()
+    for index, instruction in enumerate(circuit.data):
+        if index in removed:
+            continue
+        if index not in before and index not in after:
+            _append_instruction(fused, instruction)
+            continue
+        width = len(instruction.qubits)
+        tensor = _operator_matrix(instruction.operation).reshape((2,) * (2 * width))
+        for qubit_index, qubit in enumerate(instruction.qubits):
+            if qubit in after.get(index, {}):
+                axis = width - 1 - qubit_index
+                tensor = np.tensordot(after[index][qubit], tensor, axes=([1], [axis]))
+                tensor = np.moveaxis(tensor, 0, axis)
+            if qubit in before.get(index, {}):
+                axis = 2 * width - 1 - qubit_index
+                tensor = np.tensordot(tensor, before[index][qubit], axes=([axis], [0]))
+                tensor = np.moveaxis(tensor, -1, axis)
+        fused.append(
+            UnitaryGate(tensor.reshape((1 << width, 1 << width))), instruction.qubits
+        )
+    return fused
+
+
+def _pad_idle_wires(circuit: QuantumCircuit) -> QuantumCircuit:
+    padded = circuit.copy_empty_like()
+    pending = {}
+
+    def close(qubit):
+        matrix = pending.pop(qubit, None)
+        if matrix is not None:
+            padded.append(UnitaryGate(matrix.conjugate().T), [qubit])
+
+    for layer in circuit_to_dag(circuit).layers():
+        nodes = list(layer["graph"].op_nodes())
+        busy = {qubit for node in nodes for qubit in node.qargs}
+        has_multi = any(
+            isinstance(node.op, UnitaryGate) and node.op.num_qubits > 1
+            and not _is_classical_instruction(node.op)
+            for node in nodes
+        )
+        for node in nodes:
+            operation = node.op
+            can_absorb = (
+                isinstance(operation, UnitaryGate)
+                and operation.num_qubits > 1
+                and not _is_classical_instruction(operation)
+            )
+            if can_absorb and any(qubit in pending for qubit in node.qargs):
+                width = len(node.qargs)
+                tensor = _operator_matrix(operation).reshape((2,) * (2 * width))
+                for index, qubit in enumerate(node.qargs):
+                    matrix = pending.pop(qubit, None)
+                    if matrix is None:
+                        continue
+                    axis = 2 * width - 1 - index
+                    tensor = np.tensordot(
+                        tensor, matrix.conjugate().T, axes=([axis], [0])
+                    )
+                    tensor = np.moveaxis(tensor, -1, axis)
+                operation = UnitaryGate(tensor.reshape((1 << width, 1 << width)))
+            else:
+                for qubit in node.qargs:
+                    close(qubit)
+            padded.append(operation, node.qargs, node.cargs)
+
+        if has_multi:
+            for qubit in circuit.qubits:
+                if qubit in busy:
+                    continue
+                matrix = _operator_matrix(UGate(*_random_u_params()))
+                padded.append(UnitaryGate(matrix), [qubit])
+                pending[qubit] = matrix @ pending.get(qubit, np.eye(2))
+
+    for qubit in circuit.qubits:
+        close(qubit)
+    return padded
+
+
+def apply_basis_obfuscation(
+    circuit: QuantumCircuit, *, fuse_single_qubit_gates: bool = False,
+    pad_idle_wires: bool = False,
+) -> QuantumCircuit:
     obfuscated = QuantumCircuit(*circuit.qregs, *circuit.cregs, name=circuit.name)
     obfuscated.global_phase = circuit.global_phase
     obfuscated.metadata = circuit.metadata.copy() if circuit.metadata else {}
@@ -168,13 +293,18 @@ def apply_basis_obfuscation(circuit: QuantumCircuit) -> QuantumCircuit:
             output_basis_params,
         )
 
-        phase = 0.0
         transformed_gate = UnitaryGate(transformed_matrix)
 
-        obfuscated.global_phase += phase
         obfuscated.append(transformed_gate, instruction.qubits)
         for qubit, params in zip(instruction.qubits, output_basis_params):
             current_basis[qubit] = params
 
     close_bases(circuit.qubits)
+    obfuscated = (
+        _fuse_neighboring_single_qubit_gates(obfuscated)
+        if fuse_single_qubit_gates else obfuscated
+    )
+    if pad_idle_wires:
+        obfuscated = _pad_idle_wires(obfuscated)
+
     return obfuscated

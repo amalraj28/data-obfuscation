@@ -1,4 +1,5 @@
 import unittest
+import numpy as np
 
 from qiskit import QuantumCircuit, transpile
 from qiskit.quantum_info import Operator
@@ -28,27 +29,36 @@ class TestGroverSearch(unittest.TestCase):
         self.assertEqual(oracle_gate.num_qubits, grover.num_qubits)
         self.assertTrue(Operator(oracle_gate).equiv(Operator(oracle_circuit)))
 
-    def test_query_uses_plain_explicit_x_mask(self):
-        num_sum_qubits = self.num_bits + 2
-        zero_bits = format(self.target, f"0{num_sum_qubits}b").count("0")
-        query = self.grover._build_query_circuit(self.target)
+    def test_msb_phase_query_marks_only_target(self):
+        for num_bits in (1, 3):
+            grover = GroverSearch(AdderBuilder(num_bits))
+            self.assertEqual(grover.num_qubits, 3 * num_bits + 4)
+            for target in range(3 * ((1 << num_bits) - 1) + 1):
+                with self.subTest(num_bits=num_bits, target=target):
+                    query = grover._build_query_circuit(target)
+                    self.assertEqual(query.num_qubits, num_bits + 2)
+                    phases = np.ones(1 << query.num_qubits)
+                    phases[target] = -1
+                    np.testing.assert_allclose(
+                        Operator(query).data, np.diag(phases), atol=1e-12
+                    )
 
-        self.assertEqual(query.count_ops().get("x"), 2 * zero_bits)
-        self.assertEqual(query.count_ops().get("mcx"), 1)
+    def test_oracle_restores_workspace_and_marks_matching_inputs(self):
+        grover = GroverSearch(AdderBuilder(1))
+        for target in range(4):
+            matrix = Operator(grover.build_oracle_circuit(target)).data
+            for value in range(8):
+                expected = np.zeros(1 << grover.num_qubits)
+                expected[value] = -1 if value.bit_count() == target else 1
+                np.testing.assert_allclose(matrix[:, value], expected, atol=1e-12)
 
-    def test_phase_ancilla_is_initialized_once(self):
-        self.grover.apply_grover_iterations(
-            self.target,
-            2,
-            expand_components=True,
-        )
-        operations = self.grover.qc.count_ops()
-
-        self.assertEqual(operations.get("h"), len(self.grover.input_qubits) * 5 + 1)
-        self.assertEqual(operations.get("z"), 1)
-        query = self.grover._build_query_circuit(self.target)
-        self.assertNotIn("h", query.count_ops())
-        self.assertNotIn("z", query.count_ops())
+    def test_diffuser_uses_input_msb_without_ancilla(self):
+        grover = GroverSearch(AdderBuilder(1))
+        diffuser = grover.build_diffuser_circuit()
+        self.assertEqual(diffuser.num_qubits, len(grover.input_qubits))
+        dimension = 1 << diffuser.num_qubits
+        expected = np.eye(dimension) - 2 * np.ones((dimension, dimension)) / dimension
+        np.testing.assert_allclose(Operator(diffuser).data, expected, atol=1e-12)
 
     def test_complete_grover_supports_basis_obfuscation(self):
         grover = GroverSearch(AdderBuilder(1))
@@ -57,10 +67,7 @@ class TestGroverSearch(unittest.TestCase):
         obfuscated = apply_basis_obfuscation(grover.qc)
 
         self.assertTrue(Operator(obfuscated).equiv(Operator(grover.qc)))
-        self.assertEqual(
-            len(obfuscated.data),
-            len(grover.qc.data) + 2 * grover.qc.num_qubits,
-        )
+        self.assertEqual(obfuscated.num_qubits, grover.qc.num_qubits)
 
     def test_compact_and_expanded_iterations_are_equivalent(self):
         compact = GroverSearch(AdderBuilder(1))
@@ -98,10 +105,14 @@ class TestGroverSearch(unittest.TestCase):
         self.grover.apply_grover_iterations(self.target, iterations)
         self.grover.measure_inputs()
 
-        counts = self.backend.run(
-            transpile(self.grover.qc, self.backend),
-            shots=self.shots,
-        ).result().get_counts()
+        counts = (
+            self.backend.run(
+                transpile(self.grover.qc, self.backend),
+                shots=self.shots,
+            )
+            .result()
+            .get_counts()
+        )
         decoded = self.grover.decode_results(counts)
         correct_freq = sum(
             result["freq"]
